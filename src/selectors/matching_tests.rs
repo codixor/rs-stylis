@@ -137,6 +137,17 @@ fn unsupported_selector_features_are_explicit_and_do_not_match_under_negation() 
     ] {
         let selectors = parse(css);
         assert_eq!(check_matching_support(&selectors.0[0]), Err(reason));
+        assert_eq!(
+            try_matches_selector(
+                &selectors.0[0],
+                0,
+                None,
+                &Sibling(0),
+                &mut ctx,
+                &mut |_, _| {}
+            ),
+            Err(reason)
+        );
         assert!(!matches_selector_list(&selectors, &Sibling(0), &mut ctx));
     }
 }

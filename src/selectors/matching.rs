@@ -190,7 +190,7 @@ pub enum UnsupportedSelector {
 }
 
 /// Checks a selector, including nested alternatives, before matching against a DOM.
-/// Callers may use this once when preparing selectors for repeated matching.
+/// Use this to validate a parsed selector without an element or matching context.
 pub fn check_matching_support<'i, I: SelectorImpl<'i>>(
     selector: &Selector<'i, I>,
 ) -> Result<(), UnsupportedSelector> {
@@ -246,16 +246,36 @@ where
     E: Element<'i>,
     F: FnMut(&E, ElementSelectorFlags),
 {
-    // Use the bloom filter to fast-reject.
-    if let Some(hashes) = hashes {
-        if let Some(filter) = context.bloom_filter {
-            if !may_match(hashes, filter) {
-                return false;
-            }
-        }
+    try_matches_selector(selector, offset, hashes, element, context, flags_setter).unwrap_or(false)
+}
+
+/// Matches the selector, reporting features that require an enclosing rule or a richer DOM.
+pub fn try_matches_selector<'i, E, F>(
+    selector: &Selector<'i, E::Impl>,
+    offset: usize,
+    hashes: Option<&AncestorHashes>,
+    element: &E,
+    context: &mut MatchingContext<'_, 'i, E::Impl>,
+    flags_setter: &mut F,
+) -> Result<bool, UnsupportedSelector>
+where
+    E: Element<'i>,
+    F: FnMut(&E, ElementSelectorFlags),
+{
+    let iter = selector.iter_from(offset);
+    check_components(iter.remaining_components())?;
+    if let (Some(hashes), Some(filter)) = (hashes, context.bloom_filter)
+        && !may_match(hashes, filter)
+    {
+        return Ok(false);
     }
 
-    matches_complex_selector(selector.iter_from(offset), element, context, flags_setter)
+    Ok(matches_supported_selector(
+        iter,
+        element,
+        context,
+        flags_setter,
+    ))
 }
 
 /// Whether a compound selector matched, and whether it was the rightmost

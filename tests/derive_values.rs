@@ -43,7 +43,12 @@ fn named_fields_cannot_shadow_macro_locals() {
             dest: 3
         }
     );
-    assert_eq!(value.to_css_string(Default::default()).unwrap(), "1 2 3");
+    assert_eq!(
+        value
+            .to_css_string(rs_stylis::PrinterOptions::default())
+            .unwrap(),
+        "1 2 3"
+    );
 }
 
 #[test]
@@ -63,6 +68,11 @@ fn present_fields_always_have_one_separator() {
         (Words::Optional(Some(Word::One), None), "one"),
         (Words::Optional(None, None), ""),
     ] {
-        assert_eq!(value.to_css_string(Default::default()).unwrap(), expected);
+        assert_eq!(
+            value
+                .to_css_string(rs_stylis::PrinterOptions::default())
+                .unwrap(),
+            expected
+        );
     }
 }

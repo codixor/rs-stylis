@@ -91,9 +91,9 @@ fn value_parser_rejects_trailing_tokens_with_default_options() {
         traits::{Parse, ParseWithOptions},
     };
 
-    assert!(ZIndex::parse_string_with_options("1 2", Default::default()).is_err());
+    assert!(ZIndex::parse_string_with_options("1 2", ParserOptions::default()).is_err());
     assert_eq!(
-        ZIndex::parse_string_with_options("1 ", Default::default()).unwrap(),
+        ZIndex::parse_string_with_options("1 ", ParserOptions::default()).unwrap(),
         ZIndex::parse_string("1").unwrap()
     );
 }

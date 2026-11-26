@@ -1,4 +1,4 @@
-use rs_stylis::dependencies::Dependency;
+use rs_stylis::dependencies::{Dependency, DependencyOptions};
 use rs_stylis::properties::transform::Transform;
 use rs_stylis::properties::{Property, PropertyId};
 use rs_stylis::traits::{Parse, ToCss};
@@ -48,7 +48,7 @@ fn prefixed_declarations_use_module_names_and_url_placeholders() {
     sheet.minify(react_minify()).unwrap();
     let result = sheet
         .to_css(PrinterOptions {
-            analyze_dependencies: Some(Default::default()),
+            analyze_dependencies: Some(DependencyOptions::default()),
             ..react_printer()
         })
         .unwrap();

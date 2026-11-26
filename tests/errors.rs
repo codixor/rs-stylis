@@ -58,6 +58,6 @@ fn invalid_css_modules_grid_pattern_matches_error_surface() {
 
     assert_eq!(
         error.to_string(),
-        "The CSS modules `pattern` config must end with `[local]` for use in CSS grid line names. at unknown.css:0:1"
+        "The CSS modules `pattern` config must end with `[local]` for use in CSS grid line names. at grid.module.css:0:1"
     );
 }

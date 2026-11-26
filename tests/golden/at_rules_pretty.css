@@ -1,0 +1,10 @@
+@media screen and (width >= 600px) {
+  @supports (display: grid) {
+    @container card (width > 30rem) {
+      .card {
+        display: grid;
+        gap: 1rem;
+      }
+    }
+  }
+}

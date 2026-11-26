@@ -1,0 +1,23 @@
+[package]
+name = "rs-stylis-fuzz"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.100"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+rs-stylis = { path = ".." }
+
+[[bin]]
+name = "parse"
+path = "fuzz_targets/parse.rs"
+test = false
+doc = false
+bench = false

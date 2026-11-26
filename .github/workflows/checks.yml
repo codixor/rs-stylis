@@ -1,0 +1,80 @@
+name: Checks
+
+on:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with:
+          version: 2026.11.7
+          install_args: github:nextest-rs/nextest github:obi1kenobi/cargo-semver-checks
+      - run: cargo fmt --all --check && cargo fmt --manifest-path fuzz/Cargo.toml --check
+      - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - run: cargo nextest run --locked --workspace --all-features
+      - run: cargo test --locked --workspace --all-features --doc
+      - run: cargo nextest run --locked --workspace --no-default-features
+      - run: cargo check --locked --workspace --all-features --benches
+      - run: cargo package --locked --workspace
+      - name: Compare the public API to the previous release
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          baseline=$(python3 scripts/semver_baseline.py)
+          if [[ -n "$baseline" ]]; then
+            cargo semver-checks --workspace --baseline-version "$baseline"
+          else
+            echo "First release; no published baseline."
+          fi
+
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
+        with:
+          tool: cargo-deny@0.22.0
+      - run: cargo deny --locked --all-features check
+      - run: cargo deny --manifest-path fuzz/Cargo.toml --locked --config deny.toml check
+
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      NIGHTLY: nightly-2026-11-13
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$NIGHTLY" --profile minimal
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
+        with:
+          tool: cargo-fuzz@0.13.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: fuzz
+          key: fuzz
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - name: Exercise the public parser under AddressSanitizer
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/corpus"
+          cp fuzz/seeds/* "$RUNNER_TEMP/corpus/"
+          cargo +"$NIGHTLY" fuzz run parse "$RUNNER_TEMP/corpus" -- -runs=512 -max_len=2048 -timeout=5 -rss_limit_mb=1024

@@ -1,0 +1,9 @@
+:root {
+  --brand: #0af;
+  --space: 1rem;
+}
+
+.button {
+  color: var(--brand);
+  padding: var(--space);
+}

@@ -1,0 +1,21 @@
+[package]
+name = "rs-stylis-derive"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Procedural macros for the rs-stylis CSS parser and printer"
+readme = "README.md"
+license = "MPL-2.0 AND (MIT OR Apache-2.0)"
+keywords = ["css", "stylis", "derive"]
+categories = ["development-tools::procedural-macro-helpers", "parsing"]
+include = ["/src/**", "/README.md", "/LICENSE"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+convert_case = "0.11.0"
+proc-macro2 = { version = "1.0", features = ["span-locations"] }
+quote = "1.0"
+syn = { version = "2.0", features = ["full", "parsing", "extra-traits"] }

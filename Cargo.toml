@@ -1,0 +1,97 @@
+[workspace]
+members = ["macros"]
+exclude = ["fuzz"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100"
+repository = "https://github.com/codixor/rs-stylis"
+
+[package]
+name = "rs-stylis"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "CSS parser, transformer, and minifier with CSS Modules and browser target support"
+readme = "README.md"
+license = "MPL-2.0 AND MIT AND (MIT OR Apache-2.0) AND CC-BY-4.0 AND CC0-1.0 AND W3C-20150513"
+keywords = ["css", "parser", "minify", "normalize", "stylis"]
+categories = ["parsing", "development-tools", "web-programming"]
+include = ["/src/**", "/build.rs", "/examples/**", "/benches/**", "/tests/**", "/README.md", "/LICENSE"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = []
+browserslist = ["browserslist-rs"]
+
+[dependencies]
+bitflags = "2.11.1"
+browserslist-rs = { version = "0.19.0", optional = true }
+bumpalo = { version = "3.20.2", features = ["collections"] }
+const-str = "1.1.0"
+cssparser = "0.37.0"
+cssparser-color = "0.5.0"
+data-encoding = "2.10.0"
+indexmap = "2.14.0"
+itertools = "0.14.0"
+lazy_static = "1.5.0"
+log = "0.4.29"
+pastey = "0.2.2"
+pathdiff = "0.2.3"
+phf = { version = "0.13.1", default-features = false }
+precomputed-hash = "0.1.1"
+rapidhash = "4.4.1"
+rustc-hash = "2.1.2"
+smallvec = { version = "1.15.1", default-features = false }
+stylis-derive = { package = "rs-stylis-derive", path = "macros", version = "0.1.0" }
+
+[dev-dependencies]
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support", "html_reports", "plotters"] }
+indoc = "2.0.7"
+pretty_assertions = "1.4.1"
+
+[build-dependencies]
+phf_codegen = "0.13.1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.4.2", features = ["wasm_js"] }
+
+[lints.rust]
+unsafe_code = "warn"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+
+[[bench]]
+name = "stylis_core"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+debug = false
+strip = "symbols"
+panic = "unwind"
+incremental = false
+overflow-checks = false
+
+[profile.min-size]
+inherits = "release"
+opt-level = "z"
+panic = "abort"
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+
+[profile.release-debuginfo]
+inherits = "release"
+debug = "line-tables-only"
+strip = "none"
+split-debuginfo = "packed"

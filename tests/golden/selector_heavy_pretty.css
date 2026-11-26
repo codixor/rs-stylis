@@ -1,0 +1,4 @@
+.card:is(.primary, .secondary) > .title, button[data-kind="cta"]:hover:before {
+  color: red;
+  content: "go";
+}

@@ -414,12 +414,8 @@ pub struct ImageSetOption<'i> {
 
 impl<'i> Parse<'i> for ImageSetOption<'i> {
     fn parse<'t>(input: &mut Parser<'i, 't>) -> Result<Self, ParseError<'i, ParserError<'i>>> {
-        let loc = input.current_source_location();
-        let image = if let Ok(url) = input.try_parse(|input| input.expect_url_or_string()) {
-            Image::Url(Url {
-                url: url.into(),
-                loc: loc.into(),
-            })
+        let image = if let Ok(url) = input.try_parse(Url::parse_url_or_string) {
+            Image::Url(url)
         } else {
             Image::parse(input)?
         };

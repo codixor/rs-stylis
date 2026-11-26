@@ -131,6 +131,22 @@ impl<'a, 'b, 'c, W: std::fmt::Write + Sized> Printer<'a, 'b, 'c, W> {
         }
     }
 
+    pub(crate) fn with_rule_location<T>(
+        &mut self,
+        mut loc: Location,
+        print: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        // A separately parsed stylesheet can already carry its index in a future bundle.
+        // Its own source and CSS module tables still have just one entry.
+        if self.sources.is_some_and(|sources| sources.len() == 1) {
+            loc.source_index = 0;
+        }
+        let previous = std::mem::replace(&mut self.loc, loc);
+        let result = print(self);
+        self.loc = previous;
+        result
+    }
+
     /// Writes a raw string to the underlying destination.
     ///
     /// NOTE: Is is assumed that the string does not contain any newline characters.

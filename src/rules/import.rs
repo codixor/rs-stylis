@@ -3,7 +3,7 @@
 use super::Location;
 use super::layer::LayerName;
 use super::supports::SupportsCondition;
-use crate::dependencies::{Dependency, ImportDependency};
+use crate::dependencies::{Dependency, ImportDependency, SourceSpan};
 use crate::error::PrinterError;
 use crate::media_query::MediaList;
 use crate::printer::Printer;
@@ -16,7 +16,9 @@ use cssparser::*;
 pub struct ImportRule<'i> {
     /// The url to import.
     pub url: CowArcStr<'i>,
-    /// An optional cascade layer name, or `None` for an anonymous layer.
+    /// The original source span of the URL contents, excluding quotes and delimiters.
+    pub url_span: SourceSpan,
+    /// The cascade layer. `None` means unlayered and `Some(None)` means anonymous.
     pub layer: Option<Option<LayerName<'i>>>,
     /// An optional `supports()` condition.
     pub supports: Option<SupportsCondition<'i>>,

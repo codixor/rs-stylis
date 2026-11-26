@@ -283,6 +283,7 @@ where
         let mut dest = String::with_capacity(estimated_capacity);
         let project_root = options.project_root.clone();
         let mut printer = Printer::new(&mut dest, options);
+        printer.sources = Some(&self.sources);
 
         for comment in &self.license_comments {
             printer.write_str("/*")?;

@@ -45,6 +45,23 @@ The printer returns both the generated CSS and a map of the local class names
 to their exports. The CSS-in-JS compatibility options are
 `MinifyOptions::react_compat` and `NormalizationProfile::ReactCompat`.
 
+## Upgrading from 0.1
+
+Dependency records now identify the originating stylesheet. URL ranges cover
+the original URL contents, including CSS escapes. Lines and UTF-16 columns
+start at one, and the end is inclusive. For an empty URL, insert at the start
+position. Code that constructs AST nodes directly must supply `Url::span` or
+`ImportRule::url_span`. Parsing CSS fills these fields automatically.
+
+`ImportDependency::layer` distinguishes unlayered, anonymously layered and
+named-layer imports. Use it with the recorded media and supports conditions
+when inlining an import.
+
+The DOM selector matcher supports filtered `:nth-child()` and
+`:nth-last-child()`. Use `parcel_selectors::matching::try_matches_selector`
+to distinguish a nonmatch from selectors that need a richer DOM or an
+enclosing style rule, including `:has()`, table-column selectors and `&`.
+
 ## Examples
 
 Run the examples from a checkout.

@@ -6,7 +6,7 @@ for a complete stylesheet and `StyleAttribute` for an inline declaration list.
 
 ## Minify a stylesheet
 
-Add `rs-stylis = "0.1"` to your Cargo dependencies. The crate requires Rust
+Add `rs-stylis = "0.2"` to your Cargo dependencies. The crate requires Rust
 1.100 or later.
 
 ```rust

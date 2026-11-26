@@ -1050,6 +1050,10 @@ pub struct SelectorIter<'a, 'i, Impl: SelectorImpl<'i>> {
 }
 
 impl<'a, 'i, Impl: 'a + SelectorImpl<'i>> SelectorIter<'a, 'i, Impl> {
+    pub(super) fn remaining_components(&self) -> &'a [Component<'i, Impl>] {
+        self.iter.as_slice()
+    }
+
     /// Prepares this iterator to point to the next sequence to the left,
     /// returning the combinator if the sequence was found.
     #[inline]

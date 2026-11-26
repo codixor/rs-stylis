@@ -29,9 +29,10 @@ jobs:
       - run: cargo test --locked --workspace --all-features --doc
       - run: cargo nextest run --locked --workspace --no-default-features
       - run: cargo check --locked --workspace --all-features --benches
+      - run: cargo check --locked --workspace --all-targets --all-features
+      - run: cargo doc --locked --workspace --no-deps --all-features
       - run: cargo package --locked --workspace
       - name: Compare the public API to the previous release
-        if: github.event_name == 'push'
         shell: bash
         run: |
           baseline=$(python3 scripts/semver_baseline.py)

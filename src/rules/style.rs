@@ -148,8 +148,9 @@ impl<'i, T> StyleRule<'i, T> {
     pub(crate) fn hash_key(&self) -> u64 {
         let mut hasher = rapidhash::fast::RapidHasher::default();
         self.selectors.hash(&mut hasher);
-        for (property, _) in self.declarations.iter() {
+        for (property, important) in self.declarations.iter() {
             property.property_id().hash(&mut hasher);
+            important.hash(&mut hasher);
         }
         hasher.finish()
     }
@@ -164,7 +165,7 @@ impl<'i, T> StyleRule<'i, T> {
                 .declarations
                 .iter()
                 .zip(other_rule.declarations.iter())
-                .all(|((a, _), (b, _))| a.property_id() == b.property_id())
+                .all(|((a, ai), (b, bi))| a.property_id() == b.property_id() && ai == bi)
     }
 
     pub(crate) fn update_prefix(&mut self, context: &mut MinifyContext<'_, 'i>) {
@@ -197,7 +198,7 @@ where
 {
     loop {
         let loc = parser.current_source_location();
-        if loc.line >= dest.line || (loc.line == dest.line && loc.column >= dest.column) {
+        if (loc.line, loc.column) >= (dest.line, dest.column) {
             return parse(parser);
         }
 

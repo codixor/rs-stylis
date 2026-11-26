@@ -7,6 +7,10 @@ mod to_css;
 mod visit;
 
 /// Generates visitor traversal over the fields of a syntax tree node.
+///
+/// This derive uses the invoking crate's visitor runtime. Provide
+/// `crate::visitor::{Visit, Visitor, VisitTypes}` and bring that `Visit` trait
+/// into scope alongside the derive. The crate README describes the contract.
 #[proc_macro_derive(Visit, attributes(visit, skip_visit, skip_type, visit_types))]
 pub fn derive_visit_children(input: TokenStream) -> TokenStream {
     visit::derive_visit_children(input)

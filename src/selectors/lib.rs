@@ -24,6 +24,8 @@ pub mod bloom;
 mod builder;
 pub mod context;
 pub mod matching;
+#[cfg(test)]
+mod matching_tests;
 mod nth_index_cache;
 pub mod parser;
 pub mod sink;

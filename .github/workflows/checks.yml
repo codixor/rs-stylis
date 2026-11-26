@@ -77,4 +77,4 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/corpus"
           cp fuzz/seeds/* "$RUNNER_TEMP/corpus/"
-          cargo +"$NIGHTLY" fuzz run parse "$RUNNER_TEMP/corpus" -- -runs=512 -max_len=2048 -timeout=5 -rss_limit_mb=1024
+          cargo +"$NIGHTLY" fuzz run --target x86_64-unknown-linux-gnu --sanitizer address parse "$RUNNER_TEMP/corpus" -- -runs=512 -max_len=2048 -timeout=5 -rss_limit_mb=1024

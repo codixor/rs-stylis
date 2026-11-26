@@ -23,6 +23,29 @@ enum Words {
     Optional(Option<Word>, std::option::Option<Word>),
 }
 
+#[derive(Debug, PartialEq, Parse, ToCss)]
+enum Named {
+    Fields {
+        input: i32,
+        separator: Option<i32>,
+        dest: i32,
+    },
+}
+
+#[test]
+fn named_fields_cannot_shadow_macro_locals() {
+    let value = Named::parse_string("1 2 3").unwrap();
+    assert_eq!(
+        value,
+        Named::Fields {
+            input: 1,
+            separator: Some(2),
+            dest: 3
+        }
+    );
+    assert_eq!(value.to_css_string(Default::default()).unwrap(), "1 2 3");
+}
+
 #[test]
 fn partial_variants_restore_the_input_cursor() {
     assert_eq!(Value::parse_string("3").unwrap(), Value::Single(3));

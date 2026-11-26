@@ -51,12 +51,7 @@ fn derive_enum(data: &DataEnum, ident: &Ident, opts: &CssOptions) -> TokenStream
             .fields
             .iter()
             .enumerate()
-            .map(|(index, field)| {
-                field.ident.as_ref().map_or_else(
-                    || Ident::new(&format!("_{}", index), Span::call_site()),
-                    |ident| ident.clone(),
-                )
-            })
+            .map(|(index, _)| Ident::new(&format!("field_{index}"), Span::mixed_site()))
             .collect::<Vec<_>>();
 
         let constructor = match &variant.fields {
@@ -67,9 +62,10 @@ fn derive_enum(data: &DataEnum, ident: &Ident, opts: &CssOptions) -> TokenStream
                 ));
                 continue;
             }
-            Fields::Named(_) => {
+            Fields::Named(named) => {
+                let labels = named.named.iter().map(|field| &field.ident);
                 quote! {
-                  #ident::#name { #(#fields),* }
+                  #ident::#name { #(#labels: #fields),* }
                 }
             }
             Fields::Unnamed(_) => {

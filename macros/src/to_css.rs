@@ -47,12 +47,7 @@ fn derive_enum(data: &DataEnum, opts: &CssOptions) -> TokenStream2 {
                     .fields
                     .iter()
                     .enumerate()
-                    .map(|(index, field)| {
-                        field.ident.as_ref().map_or_else(
-                            || Ident::new(&format!("_{}", index), Span::call_site()),
-                            |ident| ident.clone(),
-                        )
-                    })
+                    .map(|(index, _)| Ident::new(&format!("field_{index}"), Span::mixed_site()))
                     .collect::<Vec<_>>();
 
                 let writes = if fields.is_empty() {
@@ -92,9 +87,10 @@ fn derive_enum(data: &DataEnum, opts: &CssOptions) -> TokenStream2 {
                           Self::#name => dest.write_str(#s)
                         }
                     }
-                    Fields::Named(_) => {
+                    Fields::Named(named) => {
+                        let labels = named.named.iter().map(|field| &field.ident);
                         quote! {
-                          Self::#name { #(#fields),* } => {
+                          Self::#name { #(#labels: #fields),* } => {
                             #writes
                           }
                         }

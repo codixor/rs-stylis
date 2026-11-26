@@ -165,7 +165,12 @@ impl<'i, T> StyleRule<'i, T> {
                 .declarations
                 .iter()
                 .zip(other_rule.declarations.iter())
-                .all(|((a, ai), (b, bi))| a.property_id() == b.property_id() && ai == bi)
+                .all(|((later, later_important), (earlier, earlier_important))| {
+                    later_important == earlier_important
+                        && later.property_id() == earlier.property_id()
+                        // A browser may ignore an unsupported value and use the earlier fallback.
+                        && (!matches!(later, crate::properties::Property::Unparsed(_)) || later == earlier)
+                })
     }
 
     pub(crate) fn update_prefix(&mut self, context: &mut MinifyContext<'_, 'i>) {

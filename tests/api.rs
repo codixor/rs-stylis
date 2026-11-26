@@ -54,6 +54,17 @@ fn nonadjacent_rules_preserve_declaration_importance() {
 }
 
 #[test]
+fn unparsed_value_keeps_earlier_nonadjacent_fallback() {
+    let output = render(
+        ".a{color:red}.b{width:1px}.a{color:future-keyword}",
+        true,
+        true,
+    );
+    assert!(output.contains("color:red"), "{output}");
+    assert!(output.contains("color:future-keyword"), "{output}");
+}
+
+#[test]
 fn property_location_uses_the_rules_column() {
     use rs_stylis::rules::CssRule;
 

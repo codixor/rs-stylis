@@ -246,7 +246,10 @@ where
     E: Element<'i>,
     F: FnMut(&E, ElementSelectorFlags),
 {
-    try_matches_selector(selector, offset, hashes, element, context, flags_setter).unwrap_or(false)
+    if rejected_by_bloom(hashes, context.bloom_filter) {
+        return false;
+    }
+    matches_complex_selector(selector.iter_from(offset), element, context, flags_setter)
 }
 
 /// Matches the selector, reporting features that require an enclosing rule or a richer DOM.
@@ -264,9 +267,7 @@ where
 {
     let iter = selector.iter_from(offset);
     check_components(iter.remaining_components())?;
-    if let (Some(hashes), Some(filter)) = (hashes, context.bloom_filter)
-        && !may_match(hashes, filter)
-    {
+    if rejected_by_bloom(hashes, context.bloom_filter) {
         return Ok(false);
     }
 
@@ -276,6 +277,11 @@ where
         context,
         flags_setter,
     ))
+}
+
+#[inline]
+fn rejected_by_bloom(hashes: Option<&AncestorHashes>, filter: Option<&BloomFilter>) -> bool {
+    matches!((hashes, filter), (Some(hashes), Some(filter)) if !may_match(hashes, filter))
 }
 
 /// Whether a compound selector matched, and whether it was the rightmost

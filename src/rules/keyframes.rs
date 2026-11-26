@@ -166,7 +166,7 @@ impl<'i> KeyframesRule<'i> {
                     important_declarations: vec![],
                     source_order: vec![],
                     authored_declarations: vec![],
-                    react_compat_declarations: None,
+                    react_compat_prefixes: None,
                     declarations: keyframe
                         .declarations
                         .declarations

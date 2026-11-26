@@ -202,31 +202,38 @@ impl<'i, T: ToCss> CssRule<'i, T> {
     where
         W: std::fmt::Write,
     {
+        macro_rules! print_at {
+            ($rule:ident, $method:ident $(, $arg:expr)*) => {
+                dest.with_rule_location($rule.loc, |dest| $rule.$method(dest $(, $arg)*))
+            };
+        }
         match self {
-            CssRule::Media(media) => media.to_css_with_context(dest, context),
-            CssRule::Import(import) => import.to_css(dest),
-            CssRule::Style(style) => style.to_css_with_context(dest, context),
-            CssRule::Keyframes(keyframes) => keyframes.to_css(dest),
-            CssRule::FontFace(font_face) => font_face.to_css(dest),
-            CssRule::FontPaletteValues(f) => f.to_css(dest),
-            CssRule::FontFeatureValues(font_feature_values) => font_feature_values.to_css(dest),
-            CssRule::Page(font_face) => font_face.to_css(dest),
-            CssRule::Supports(supports) => supports.to_css_with_context(dest, context),
-            CssRule::CounterStyle(counter_style) => counter_style.to_css(dest),
-            CssRule::Namespace(namespace) => namespace.to_css(dest),
-            CssRule::MozDocument(document) => document.to_css_with_context(dest, context),
-            CssRule::Nesting(nesting) => nesting.to_css_with_context(dest, context),
-            CssRule::NestedDeclarations(nested) => nested.to_css_with_context(dest, context),
-            CssRule::Viewport(viewport) => viewport.to_css(dest),
-            CssRule::CustomMedia(custom_media) => custom_media.to_css(dest),
-            CssRule::LayerStatement(layer) => layer.to_css(dest),
-            CssRule::LayerBlock(layer) => layer.to_css_with_context(dest, context),
-            CssRule::Property(property) => property.to_css(dest),
-            CssRule::StartingStyle(rule) => rule.to_css_with_context(dest, context),
-            CssRule::Container(container) => container.to_css_with_context(dest, context),
-            CssRule::Scope(scope) => scope.to_css_with_context(dest, context),
-            CssRule::ViewTransition(rule) => rule.to_css(dest),
-            CssRule::Unknown(unknown) => unknown.to_css(dest),
+            CssRule::Media(media) => print_at!(media, to_css_with_context, context),
+            CssRule::Import(import) => print_at!(import, to_css),
+            CssRule::Style(style) => print_at!(style, to_css_with_context, context),
+            CssRule::Keyframes(keyframes) => print_at!(keyframes, to_css),
+            CssRule::FontFace(font_face) => print_at!(font_face, to_css),
+            CssRule::FontPaletteValues(f) => print_at!(f, to_css),
+            CssRule::FontFeatureValues(font_feature_values) => {
+                print_at!(font_feature_values, to_css)
+            }
+            CssRule::Page(font_face) => print_at!(font_face, to_css),
+            CssRule::Supports(supports) => print_at!(supports, to_css_with_context, context),
+            CssRule::CounterStyle(counter_style) => print_at!(counter_style, to_css),
+            CssRule::Namespace(namespace) => print_at!(namespace, to_css),
+            CssRule::MozDocument(document) => print_at!(document, to_css_with_context, context),
+            CssRule::Nesting(nesting) => print_at!(nesting, to_css_with_context, context),
+            CssRule::NestedDeclarations(nested) => print_at!(nested, to_css_with_context, context),
+            CssRule::Viewport(viewport) => print_at!(viewport, to_css),
+            CssRule::CustomMedia(custom_media) => print_at!(custom_media, to_css),
+            CssRule::LayerStatement(layer) => print_at!(layer, to_css),
+            CssRule::LayerBlock(layer) => print_at!(layer, to_css_with_context, context),
+            CssRule::Property(property) => print_at!(property, to_css),
+            CssRule::StartingStyle(rule) => print_at!(rule, to_css_with_context, context),
+            CssRule::Container(container) => print_at!(container, to_css_with_context, context),
+            CssRule::Scope(scope) => print_at!(scope, to_css_with_context, context),
+            CssRule::ViewTransition(rule) => print_at!(rule, to_css),
+            CssRule::Unknown(unknown) => print_at!(unknown, to_css),
             CssRule::Custom(rule) => rule.to_css(dest).map_err(|_| PrinterError {
                 kind: PrinterErrorKind::FmtError,
                 loc: None,
@@ -375,8 +382,9 @@ impl<'i, T: Clone> CssRuleList<'i, T> {
             };
           }
 
-          // Merge @keyframes rules with the same name.
-          if let Some(existing_idx) = keyframe_rules.get(&keyframes.name) {
+          // Relative URLs and CSS module names are scoped to the source file.
+          let key = (keyframes.loc.source_index, keyframes.name.clone());
+          if let Some(existing_idx) = keyframe_rules.get(&key) {
             if let Some(CssRule::Keyframes(existing)) = &mut rules.get_mut(*existing_idx) {
               // If the existing rule has the same vendor prefixes, replace it with this rule.
               if existing.vendor_prefix == keyframes.vendor_prefix {
@@ -393,7 +401,7 @@ impl<'i, T: Clone> CssRuleList<'i, T> {
           }
 
           set_prefix!(keyframes);
-          keyframe_rules.insert(keyframes.name.clone(), rules.len());
+          keyframe_rules.insert(key, rules.len());
 
           let fallbacks = keyframes.get_fallbacks(&context.targets.current);
           rules.push(rule);
@@ -407,7 +415,7 @@ impl<'i, T: Clone> CssRuleList<'i, T> {
         }
         CssRule::Media(media) => {
           if let Some(CssRule::Media(last_rule)) = rules.last_mut() {
-            if last_rule.query == media.query {
+            if last_rule.loc.source_index == media.loc.source_index && last_rule.query == media.query {
               last_rule.rules.0.extend(media.rules.0.drain(..));
               last_rule.minify(context, parent_is_unused)?;
               continue;
@@ -420,7 +428,7 @@ impl<'i, T: Clone> CssRuleList<'i, T> {
         }
         CssRule::Supports(supports) => {
           if let Some(CssRule::Supports(last_rule)) = rules.last_mut() {
-            if last_rule.condition == supports.condition {
+            if last_rule.loc.source_index == supports.loc.source_index && last_rule.condition == supports.condition {
               last_rule.rules.0.extend(supports.rules.0.drain(..));
               last_rule.minify(context, parent_is_unused)?;
               continue;
@@ -434,7 +442,8 @@ impl<'i, T: Clone> CssRuleList<'i, T> {
         }
         CssRule::Container(container) => {
           if let Some(CssRule::Container(last_rule)) = rules.last_mut() {
-            if last_rule.name == container.name && last_rule.condition == container.condition {
+            if last_rule.loc.source_index == container.loc.source_index
+              && last_rule.name == container.name && last_rule.condition == container.condition {
               last_rule.rules.0.extend(container.rules.0.drain(..));
               last_rule.minify(context, parent_is_unused)?;
               continue;
@@ -780,6 +789,12 @@ fn merge_style_rules<'i, T>(
     last_style_rule: &mut StyleRule<'i, T>,
     context: &mut MinifyContext<'_, 'i>,
 ) -> bool {
+    // Declarations and selectors inherit their rule's source file during printing.
+    // Merging across files would rebase relative URLs and CSS module names.
+    if style.loc.source_index != last_style_rule.loc.source_index {
+        return false;
+    }
+
     // Merge declarations if the selectors are equivalent, and both are compatible with all targets.
     if !context.react_compat
         && style.selectors == last_style_rule.selectors
@@ -787,7 +802,6 @@ fn merge_style_rules<'i, T>(
         && last_style_rule.is_compatible(context.targets.current)
         && style.rules.0.is_empty()
         && last_style_rule.rules.0.is_empty()
-        && (!context.css_modules || style.loc.source_index == last_style_rule.loc.source_index)
     {
         last_style_rule
             .declarations
@@ -880,22 +894,16 @@ impl<'i, T: ToCss> CssRuleList<'i, T> {
             }
 
             // Skip @import rules if collecting dependencies.
-            if let CssRule::Import(rule) = &rule {
-                if dest.remove_imports {
-                    let dep = if dest.dependencies.is_some() {
-                        Some(Dependency::Import(ImportDependency::new(
-                            &rule,
-                            dest.filename(),
-                        )))
-                    } else {
-                        None
-                    };
-
+            if let CssRule::Import(rule) = rule
+                && dest.remove_imports
+            {
+                dest.with_rule_location(rule.loc, |dest| {
+                    let dep = ImportDependency::new(rule, dest.filename());
                     if let Some(dependencies) = &mut dest.dependencies {
-                        dependencies.push(dep.unwrap());
-                        continue;
+                        dependencies.push(Dependency::Import(dep));
                     }
-                }
+                });
+                continue;
             }
 
             if let CssRule::Style(style) = rule
@@ -920,13 +928,15 @@ impl<'i, T: ToCss> CssRuleList<'i, T> {
                         dest.newline()?;
                     }
 
-                    style.to_css_with_selectors_and_context(
-                        dest,
-                        &base,
-                        None,
-                        get_prefix(&base),
-                        context,
-                    )?;
+                    dest.with_rule_location(style.loc, |dest| {
+                        style.to_css_with_selectors_and_context(
+                            dest,
+                            &base,
+                            None,
+                            get_prefix(&base),
+                            context,
+                        )
+                    })?;
                     last_without_block = false;
                 }
 
@@ -984,13 +994,15 @@ impl<'i, T: ToCss> CssRuleList<'i, T> {
 
             match delayed_rule {
                 DelayedStyleRule::Style(style, selectors) => {
-                    style.to_css_with_selectors_and_context(
-                        dest,
-                        &selectors,
-                        None,
-                        get_prefix(&selectors),
-                        context,
-                    )?;
+                    dest.with_rule_location(style.loc, |dest| {
+                        style.to_css_with_selectors_and_context(
+                            dest,
+                            &selectors,
+                            None,
+                            get_prefix(&selectors),
+                            context,
+                        )
+                    })?;
                     last_without_block = false;
                 }
             }

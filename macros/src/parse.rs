@@ -51,15 +51,10 @@ fn derive_enum(data: &DataEnum, ident: &Ident, opts: &CssOptions) -> TokenStream
             .fields
             .iter()
             .enumerate()
-            .map(|(index, field)| {
-                field.ident.as_ref().map_or_else(
-                    || Ident::new(&format!("_{}", index), Span::call_site()),
-                    |ident| ident.clone(),
-                )
-            })
+            .map(|(index, _)| Ident::new(&format!("field_{index}"), Span::mixed_site()))
             .collect::<Vec<_>>();
 
-        let mut expr = match &variant.fields {
+        let constructor = match &variant.fields {
             Fields::Unit => {
                 idents.push((
                     Literal::string(&variant.ident.to_string().to_case(opts.case)),
@@ -67,14 +62,15 @@ fn derive_enum(data: &DataEnum, ident: &Ident, opts: &CssOptions) -> TokenStream
                 ));
                 continue;
             }
-            Fields::Named(_) => {
+            Fields::Named(named) => {
+                let labels = named.named.iter().map(|field| &field.ident);
                 quote! {
-                  return Ok(#ident::#name { #(#fields),* })
+                  #ident::#name { #(#labels: #fields),* }
                 }
             }
             Fields::Unnamed(_) => {
                 quote! {
-                  return Ok(#ident::#name(#(#fields),*))
+                  #ident::#name(#(#fields),*)
                 }
             }
         };
@@ -113,29 +109,25 @@ fn derive_enum(data: &DataEnum, ident: &Ident, opts: &CssOptions) -> TokenStream
             }
         }
 
-        let is_last = index == data.variants.len() - 1;
-
-        for (index, field) in variant.fields.iter().enumerate().rev() {
+        let parse_fields = variant.fields.iter().zip(&fields).map(|(field, name)| {
             let ty = &field.ty;
-            let field_name = field.ident.as_ref().map_or_else(
-                || Ident::new(&format!("_{}", index), Span::call_site()),
-                |ident| ident.clone(),
-            );
-            if is_last {
-                expr = quote! {
-                  let #field_name = <#ty>::parse(input)?;
-                  #expr
-                };
-            } else {
-                expr = quote! {
-                  if let Ok(#field_name) = input.try_parse(<#ty>::parse) {
-                    #expr
-                  }
-                };
-            }
+            quote! { let #name = <#ty>::parse(input)?; }
+        });
+        if index + 1 == data.variants.len() {
+            non_idents.push(quote! {
+                #(#parse_fields)*
+                return Ok(#constructor);
+            });
+        } else {
+            non_idents.push(quote! {
+                if let Ok(value) = input.try_parse(|input| {
+                    #(#parse_fields)*
+                    Ok::<_, ParseError<'_, ParserError<'_>>>(#constructor)
+                }) {
+                    return Ok(value);
+                }
+            });
         }
-
-        non_idents.push(expr);
     }
 
     let idents = if idents.is_empty() {

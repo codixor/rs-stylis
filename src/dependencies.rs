@@ -1,12 +1,12 @@
 //! Dependency analysis.
 //!
 //! Dependencies in CSS can be analyzed using the `analyze_dependencies` option
-//! when printing a style sheet. These include other style sheets referenved via
+//! when printing a style sheet. These include other style sheets referenced via
 //! the `@import` rule, as well as `url()` references. See [PrinterOptions](PrinterOptions).
 //!
-//! When dependency analysis is enabled, `@import` rules are removed, and `url()`
-//! dependencies are replaced with hashed placeholders that can be substituted with
-//! the final urls later (e.g. after bundling and content hashing).
+//! Dependency analysis replaces URLs with hashed placeholders that can be substituted
+//! with the final URLs after bundling. Set [`DependencyOptions::remove_imports`] to
+//! remove `@import` rules and recover their conditions from the dependency records.
 
 use crate::css_modules::hash;
 use crate::printer::PrinterOptions;
@@ -37,6 +37,9 @@ pub struct ImportDependency {
     pub url: String,
     /// The placeholder that the URL was replaced with.
     pub placeholder: String,
+    /// The cascade layer. `None` means unlayered, `Some(None)` means anonymous,
+    /// and `Some(Some(name))` contains a serialized CSS layer name.
+    pub layer: Option<Option<String>>,
     /// An optional `supports()` condition.
     pub supports: Option<String>,
     /// A media query.
@@ -67,17 +70,14 @@ impl ImportDependency {
         ImportDependency {
             url: rule.url.as_ref().to_owned(),
             placeholder,
+            layer: rule.layer.as_ref().map(|layer| {
+                layer
+                    .as_ref()
+                    .map(|name| name.to_css_string(PrinterOptions::default()).unwrap())
+            }),
             supports,
             media,
-            loc: SourceRange::new(
-                filename,
-                Location {
-                    line: rule.loc.line + 1,
-                    column: rule.loc.column,
-                },
-                8,
-                rule.url.len() + 2,
-            ), // TODO: what about @import url(...)?
+            loc: SourceRange::new(filename, rule.url_span),
         }
     }
 }
@@ -100,7 +100,7 @@ impl UrlDependency {
         UrlDependency {
             url: url.url.to_string(),
             placeholder,
-            loc: SourceRange::new(filename, url.loc, 4, url.url.len()),
+            loc: SourceRange::new(filename, url.span),
         }
     }
 }
@@ -110,9 +110,9 @@ impl UrlDependency {
 pub struct SourceRange {
     /// The filename in which the dependency was found.
     pub file_path: String,
-    /// The starting line and column position of the dependency.
+    /// The first source code unit of the URL contents (excluding surrounding quotes).
     pub start: Location,
-    /// The ending line and column position of the dependency.
+    /// The last source code unit, inclusive. For an empty URL, this is one column before `start`.
     pub end: Location,
 }
 
@@ -121,7 +121,7 @@ pub struct SourceRange {
 pub struct Location {
     /// The line number, starting from 1.
     pub line: u32,
-    /// The column number, starting from 1.
+    /// The column number in UTF-16 code units, starting from 1.
     pub column: u32,
 }
 
@@ -135,17 +135,20 @@ impl From<SourceLocation> for Location {
 }
 
 impl SourceRange {
-    fn new(filename: &str, loc: Location, offset: u32, len: usize) -> SourceRange {
+    fn new(filename: &str, span: SourceSpan) -> SourceRange {
         SourceRange {
             file_path: filename.into(),
-            start: Location {
-                line: loc.line,
-                column: loc.column + offset,
-            },
-            end: Location {
-                line: loc.line,
-                column: loc.column + offset + (len as u32) - 1,
-            },
+            start: span.start,
+            end: span.end,
         }
     }
+}
+
+/// Positions of the original URL contents, independent of the stylesheet filename.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SourceSpan {
+    /// The first source code unit, or the insertion point for an empty URL.
+    pub start: Location,
+    /// The last source code unit, inclusive. For an empty URL this is one column before `start`.
+    pub end: Location,
 }

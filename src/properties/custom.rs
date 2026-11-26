@@ -485,7 +485,7 @@ impl<'i> TokenList<'i> {
                     Token::Dimension { raw: Some(_), .. }
                     | Token::Number { raw: Some(_), .. }
                     | Token::Percentage { raw: Some(_), .. }
-                        if dest.is_react_compat() =>
+                        if dest.uses_authored_values() =>
                     {
                         token.to_css(dest)?;
                     }
@@ -814,7 +814,7 @@ impl<'a> ToCss for Token<'a> {
                 int_value,
                 raw,
             } => {
-                if dest.is_react_compat() {
+                if dest.uses_authored_values() {
                     if let Some(raw) = raw {
                         dest.write_str(raw)?;
                     } else {
@@ -841,7 +841,7 @@ impl<'a> ToCss for Token<'a> {
                 unit,
                 raw,
             } => {
-                if dest.is_react_compat() {
+                if dest.uses_authored_values() {
                     if let Some(raw) = raw {
                         dest.write_str(raw)?;
                     } else {
@@ -869,7 +869,7 @@ impl<'a> ToCss for Token<'a> {
                 int_value,
                 raw,
             } => {
-                if dest.is_react_compat() {
+                if dest.uses_authored_values() {
                     if let Some(raw) = raw {
                         dest.write_str(raw)?;
                     } else {

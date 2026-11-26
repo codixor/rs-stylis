@@ -56,7 +56,9 @@ pub trait ParseWithOptions<'i>: Sized {
     ) -> Result<Self, ParseError<'i, ParserError<'i>>> {
         let mut input = ParserInput::new(input);
         let mut parser = Parser::new(&mut input);
-        Self::parse_with_options(&mut parser, &options)
+        let result = Self::parse_with_options(&mut parser, &options)?;
+        parser.expect_exhausted()?;
+        Ok(result)
     }
 }
 

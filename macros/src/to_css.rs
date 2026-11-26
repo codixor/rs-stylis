@@ -38,109 +38,73 @@ pub fn derive_to_css(input: TokenStream) -> TokenStream {
 }
 
 fn derive_enum(data: &DataEnum, opts: &CssOptions) -> TokenStream2 {
-    let variants = data
-    .variants
-    .iter()
-    .map(|variant| {
-      let name = &variant.ident;
-      let fields = variant
-        .fields
-        .iter()
-        .enumerate()
-        .map(|(index, field)| {
-          field.ident.as_ref().map_or_else(
-            || Ident::new(&format!("_{}", index), Span::call_site()),
-            |ident| ident.clone(),
-          )
-        })
-        .collect::<Vec<_>>();
+    let variants =
+        data.variants
+            .iter()
+            .map(|variant| {
+                let name = &variant.ident;
+                let fields = variant
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| Ident::new(&format!("field_{index}"), Span::mixed_site()))
+                    .collect::<Vec<_>>();
 
-      #[derive(PartialEq)]
-      enum NeedsSpace {
-        Yes,
-        No,
-        Maybe,
-      }
+                let writes = if fields.is_empty() {
+                    quote! { Ok(()) }
+                } else if fields.len() == 1 {
+                    let field = &fields[0];
+                    quote! { #field.to_css(dest) }
+                } else {
+                    let writes = variant.fields.iter().zip(&fields).enumerate().map(
+                        |(index, (field, name))| {
+                            let mark_written =
+                                (index + 1 < fields.len()).then(|| quote! { separator = " "; });
+                            if is_option(&field.ty) {
+                                quote! {
+                                  if let Some(value) = #name {
+                                    dest.write_str(separator)?;
+                                    value.to_css(dest)?;
+                                    #mark_written
+                                  }
+                                }
+                            } else {
+                                quote! {
+                                  dest.write_str(separator)?;
+                                  #name.to_css(dest)?;
+                                  #mark_written
+                                }
+                            }
+                        },
+                    );
+                    quote! { let mut separator = ""; #(#writes)* Ok(()) }
+                };
 
-      let mut needs_space = NeedsSpace::No;
-      let mut fields_iter = variant.fields.iter().zip(fields.iter()).peekable();
-      let mut writes = Vec::new();
-      let mut has_needs_space = false;
-      while let Some((field, name)) = fields_iter.next() {
-        writes.push(if fields.len() > 1 {
-          let space = match needs_space {
-            NeedsSpace::Yes => quote! { dest.write_char(' ')?; },
-            NeedsSpace::No => quote! {},
-            NeedsSpace::Maybe => {
-              has_needs_space = true;
-              quote! {
-                if needs_space {
-                  dest.write_char(' ')?;
+                match &variant.fields {
+                    Fields::Unit => {
+                        let s = Literal::string(&variant.ident.to_string().to_case(opts.case));
+                        quote! {
+                          Self::#name => dest.write_str(#s)
+                        }
+                    }
+                    Fields::Named(named) => {
+                        let labels = named.named.iter().map(|field| &field.ident);
+                        quote! {
+                          Self::#name { #(#labels: #fields),* } => {
+                            #writes
+                          }
+                        }
+                    }
+                    Fields::Unnamed(_) => {
+                        quote! {
+                          Self::#name(#(#fields),*) => {
+                            #writes
+                          }
+                        }
+                    }
                 }
-              }
-            }
-          };
-
-          if is_option(&field.ty) {
-            needs_space = NeedsSpace::Maybe;
-            let after_space = if matches!(fields_iter.peek(), Some((field, _)) if !is_option(&field.ty)) {
-              // If the next field is non-optional, just insert the space here.
-              needs_space = NeedsSpace::No;
-              quote! { dest.write_char(' ')?; }
-            } else {
-              quote! {}
-            };
-            quote! {
-              if let Some(v) = #name {
-                #space
-                v.to_css(dest)?;
-                #after_space
-              }
-            }
-          } else {
-            needs_space = NeedsSpace::Yes;
-            quote! {
-              #space
-              #name.to_css(dest)?;
-            }
-          }
-        } else {
-          quote! { #name.to_css(dest) }
-        });
-      }
-
-      if writes.len() > 1 {
-        writes.push(quote! { Ok(()) });
-      }
-
-      if has_needs_space {
-            writes.insert(0, quote! { let mut needs_space = false; });
-        }
-
-        match &variant.fields {
-            Fields::Unit => {
-                let s = Literal::string(&variant.ident.to_string().to_case(opts.case));
-                quote! {
-            Self::#name => dest.write_str(#s)
-          }
-        }
-        Fields::Named(_) => {
-          quote! {
-            Self::#name { #(#fields),* } => {
-              #(#writes)*
-            }
-          }
-        }
-        Fields::Unnamed(_) => {
-          quote! {
-            Self::#name(#(#fields),*) => {
-              #(#writes)*
-            }
-          }
-        }
-      }
-    })
-    .collect::<Vec<_>>();
+            })
+            .collect::<Vec<_>>();
 
     let output = quote! {
       match self {
@@ -152,5 +116,5 @@ fn derive_enum(data: &DataEnum, opts: &CssOptions) -> TokenStream2 {
 }
 
 fn is_option(ty: &Type) -> bool {
-    matches!(ty, Type::Path(p) if p.qself.is_none() && p.path.segments.iter().next().unwrap().ident == "Option")
+    matches!(ty, Type::Path(p) if p.qself.is_none() && p.path.segments.last().is_some_and(|s| s.ident == "Option"))
 }

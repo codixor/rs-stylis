@@ -42,6 +42,63 @@ fn render_with_profiles(
 }
 
 #[test]
+fn nonadjacent_rules_preserve_declaration_importance() {
+    let input = ".a{color:red!important}.b{width:1px}.a{color:blue}";
+    let output = render(input, true, true);
+    assert!(output.contains("color:red!important"), "{output}");
+
+    let input = ".a{color:red!important}.b{width:1px}.a{color:blue!important}";
+    let output = render(input, true, true);
+    assert!(!output.contains("color:red"), "{output}");
+    assert!(output.contains("#00f!important"), "{output}");
+}
+
+#[test]
+fn unparsed_value_keeps_earlier_nonadjacent_fallback() {
+    let output = render(
+        ".a{color:red}.b{width:1px}.a{color:future-keyword}",
+        true,
+        true,
+    );
+    assert!(output.contains("color:red"), "{output}");
+    assert!(output.contains("color:future-keyword"), "{output}");
+}
+
+#[test]
+fn property_location_uses_the_rules_column() {
+    use rs_stylis::rules::CssRule;
+
+    let input = ".a{color:red}.b{width:1px}";
+    let sheet = StyleSheet::parse(input, ParserOptions::default()).unwrap();
+    let CssRule::Style(rule) = &sheet.rules.0[1] else {
+        panic!("expected style rule")
+    };
+    let (name, value) = rule.property_location(input, 0).unwrap();
+    assert_eq!(
+        &input[name.start.column as usize - 1..name.end.column as usize - 1],
+        "width"
+    );
+    assert_eq!(
+        &input[value.start.column as usize - 1..value.end.column as usize - 1],
+        "1px"
+    );
+}
+
+#[test]
+fn value_parser_rejects_trailing_tokens_with_default_options() {
+    use rs_stylis::{
+        properties::position::ZIndex,
+        traits::{Parse, ParseWithOptions},
+    };
+
+    assert!(ZIndex::parse_string_with_options("1 2", ParserOptions::default()).is_err());
+    assert_eq!(
+        ZIndex::parse_string_with_options("1 ", ParserOptions::default()).unwrap(),
+        ZIndex::parse_string("1").unwrap()
+    );
+}
+
+#[test]
 fn pretty_prints_basic_rule_from_golden() {
     let input = ".foo{color:red}";
     let output = render(input, false, false);

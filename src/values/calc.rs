@@ -163,7 +163,7 @@ impl<V: ToCss + std::ops::Mul<f32, Output = V> + TrySign + Clone + std::fmt::Deb
     {
         match self {
             MathFunction::Calc(calc) => {
-                if dest.is_react_compat() {
+                if dest.uses_authored_values() {
                     if let Some(source) = &calc.source {
                         return dest.write_str(source);
                     }

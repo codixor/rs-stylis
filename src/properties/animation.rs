@@ -78,6 +78,35 @@ impl<'i> ToCss for AnimationName<'i> {
 /// A list of animation names.
 pub type AnimationNameList<'i> = SmallVec<AnimationName<'i>, 1>;
 
+// A var() can prevent the typed animation parser from recognizing a list.
+// Mark the remaining literal names so the printer can still scope them.
+pub(crate) fn mark_animation_names(value: &mut super::custom::TokenList, shorthand: bool) {
+    use super::custom::Token;
+    for token in &mut value.0 {
+        match token {
+            TokenOrValue::Token(Token::Ident(id))
+                if super::CSSWideKeyword::parse_string(id).is_err()
+                    && !id.eq_ignore_ascii_case("default")
+                    && !id.eq_ignore_ascii_case("none")
+                    && (!shorthand
+                        || (AnimationDirection::parse_string(id).is_err()
+                            && AnimationPlayState::parse_string(id).is_err()
+                            && AnimationFillMode::parse_string(id).is_err()
+                            && !EasingFunction::is_ident(id)
+                            && !id.eq_ignore_ascii_case("infinite")
+                            && !id.eq_ignore_ascii_case("auto"))) =>
+            {
+                *token = TokenOrValue::AnimationName(AnimationName::Ident(CustomIdent(id.clone())));
+            }
+            TokenOrValue::Token(Token::String(name)) => {
+                *token =
+                    TokenOrValue::AnimationName(AnimationName::String(CSSString(name.clone())));
+            }
+            _ => {}
+        }
+    }
+}
+
 /// A value for the [animation-iteration-count](https://drafts.csswg.org/css-animations/#animation-iteration-count) property.
 #[derive(Debug, Clone, PartialEq, Parse, ToCss)]
 pub enum AnimationIterationCount {
@@ -820,33 +849,7 @@ impl<'i> PropertyHandler<'i> for AnimationHandler<'i> {
             Property::Unparsed(val) if is_animation_property(&val.property_id) => {
                 let mut val = Cow::Borrowed(val);
                 if matches!(val.property_id, PropertyId::Animation(_)) {
-                    use crate::properties::custom::Token;
-
-                    // Find an identifier that isn't a keyword and replace it with an
-                    // AnimationName token so it is scoped in CSS modules.
-                    for token in &mut val.to_mut().value.0 {
-                        match token {
-                            TokenOrValue::Token(Token::Ident(id)) => {
-                                if AnimationDirection::parse_string(&id).is_err()
-                                    && AnimationPlayState::parse_string(&id).is_err()
-                                    && AnimationFillMode::parse_string(&id).is_err()
-                                    && !EasingFunction::is_ident(&id)
-                                    && id.as_ref() != "infinite"
-                                    && id.as_ref() != "auto"
-                                {
-                                    *token = TokenOrValue::AnimationName(AnimationName::Ident(
-                                        CustomIdent(id.clone()),
-                                    ));
-                                }
-                            }
-                            TokenOrValue::Token(Token::String(s)) => {
-                                *token = TokenOrValue::AnimationName(AnimationName::String(
-                                    CSSString(s.clone()),
-                                ));
-                            }
-                            _ => {}
-                        }
-                    }
+                    mark_animation_names(&mut val.to_mut().value, true);
 
                     self.range_starts = None;
                     self.range_ends = None;

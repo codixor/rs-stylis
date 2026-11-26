@@ -177,7 +177,55 @@ enum MatchesHoverAndActiveQuirk {
     No,
 }
 
+/// Selector features the generic element interface cannot evaluate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum UnsupportedSelector {
+    /// Relative selectors require traversal into descendants.
+    Has,
+    /// Table columns require a grid model supplied by a layout engine.
+    Column,
+    /// A nesting selector needs its enclosing style rule.
+    Nesting,
+}
+
+/// Checks a selector, including nested alternatives, before matching against a DOM.
+/// Use this to validate a parsed selector without an element or matching context.
+pub fn check_matching_support<'i, I: SelectorImpl<'i>>(
+    selector: &Selector<'i, I>,
+) -> Result<(), UnsupportedSelector> {
+    check_components(selector.iter_raw_match_order().as_slice())
+}
+
+fn check_components<'i, I: SelectorImpl<'i>>(
+    components: &[Component<'i, I>],
+) -> Result<(), UnsupportedSelector> {
+    for component in components {
+        let nested = match component {
+            Component::Has(_) => return Err(UnsupportedSelector::Has),
+            Component::Nesting => return Err(UnsupportedSelector::Nesting),
+            Component::Nth(data) if matches!(data.ty, NthType::Col | NthType::LastCol) => {
+                return Err(UnsupportedSelector::Column);
+            }
+            Component::Slotted(selector) | Component::Host(Some(selector)) => {
+                std::slice::from_ref(selector)
+            }
+            Component::Is(list)
+            | Component::Where(list)
+            | Component::Any(_, list)
+            | Component::Negation(list) => list,
+            Component::NthOf(data) => data.selectors(),
+            _ => continue,
+        };
+        for selector in nested {
+            check_matching_support(selector)?;
+        }
+    }
+    Ok(())
+}
+
 /// Matches a selector, fast-rejecting against a bloom filter.
+/// Unsupported selectors return false. See [`check_matching_support`] for the reason.
 ///
 /// We accept an offset to allow consumers to represent and match against
 /// partial selectors (indexed from the right). We use this API design, rather
@@ -198,16 +246,42 @@ where
     E: Element<'i>,
     F: FnMut(&E, ElementSelectorFlags),
 {
-    // Use the bloom filter to fast-reject.
-    if let Some(hashes) = hashes {
-        if let Some(filter) = context.bloom_filter {
-            if !may_match(hashes, filter) {
-                return false;
-            }
-        }
+    if rejected_by_bloom(hashes, context.bloom_filter) {
+        return false;
+    }
+    matches_complex_selector(selector.iter_from(offset), element, context, flags_setter)
+}
+
+/// Matches the selector, reporting features that require an enclosing rule or a richer DOM.
+pub fn try_matches_selector<'i, E, F>(
+    selector: &Selector<'i, E::Impl>,
+    offset: usize,
+    hashes: Option<&AncestorHashes>,
+    element: &E,
+    context: &mut MatchingContext<'_, 'i, E::Impl>,
+    flags_setter: &mut F,
+) -> Result<bool, UnsupportedSelector>
+where
+    E: Element<'i>,
+    F: FnMut(&E, ElementSelectorFlags),
+{
+    let iter = selector.iter_from(offset);
+    check_components(iter.remaining_components())?;
+    if rejected_by_bloom(hashes, context.bloom_filter) {
+        return Ok(false);
     }
 
-    matches_complex_selector(selector.iter_from(offset), element, context, flags_setter)
+    Ok(matches_supported_selector(
+        iter,
+        element,
+        context,
+        flags_setter,
+    ))
+}
+
+#[inline]
+fn rejected_by_bloom(hashes: Option<&AncestorHashes>, filter: Option<&BloomFilter>) -> bool {
+    matches!((hashes, filter), (Some(hashes), Some(filter)) if !may_match(hashes, filter))
 }
 
 /// Whether a compound selector matched, and whether it was the rightmost
@@ -238,6 +312,9 @@ pub fn matches_compound_selector_from<'i, E>(
 where
     E: Element<'i>,
 {
+    if check_matching_support(selector).is_err() {
+        return CompoundSelectorMatchingResult::NotMatched;
+    }
     if cfg!(debug_assertions) && from_offset != 0 {
         selector.combinator_at_parse_order(from_offset - 1); // This asserts.
     }
@@ -296,6 +373,22 @@ where
 /// Matches a complex selector.
 #[inline(always)]
 pub fn matches_complex_selector<'i, E, F>(
+    iter: SelectorIter<'_, 'i, E::Impl>,
+    element: &E,
+    context: &mut MatchingContext<'_, 'i, E::Impl>,
+    flags_setter: &mut F,
+) -> bool
+where
+    E: Element<'i>,
+    F: FnMut(&E, ElementSelectorFlags),
+{
+    if check_components(iter.remaining_components()).is_err() {
+        return false;
+    }
+    matches_supported_selector(iter, element, context, flags_setter)
+}
+
+fn matches_supported_selector<'i, E, F>(
     mut iter: SelectorIter<'_, 'i, E::Impl>,
     element: &E,
     context: &mut MatchingContext<'_, 'i, E::Impl>,
@@ -704,7 +797,7 @@ where
             // <slots> are never flattened tree slottables.
             !element.is_html_slot_element()
                 && context.shared.nest(|context| {
-                    matches_complex_selector(selector.iter(), element, context, flags_setter)
+                    matches_supported_selector(selector.iter(), element, context, flags_setter)
                 })
         }
         Component::PseudoElement(ref pseudo) => {
@@ -815,7 +908,7 @@ where
                 .map_or(false, |host| host == element.opaque())
                 && selector.as_ref().map_or(true, |selector| {
                     context.shared.nest(|context| {
-                        matches_complex_selector(selector.iter(), element, context, flags_setter)
+                        matches_supported_selector(selector.iter(), element, context, flags_setter)
                     })
                 })
         }
@@ -862,13 +955,50 @@ where
                 matches_generic_nth_child(element, context, 0, 1, true, false, flags_setter)
                     && matches_generic_nth_child(element, context, 0, 1, true, true, flags_setter)
             }
-            _ => todo!(),
+            NthType::Col | NthType::LastCol => false,
         },
-        Component::NthOf(..) => todo!(),
+        Component::NthOf(ref data) => {
+            if element.ignores_nth_child_selectors() {
+                return false;
+            }
+            let nth = data.nth_data();
+            let from_end = nth.ty.is_from_end();
+            flags_setter(
+                element,
+                if from_end {
+                    ElementSelectorFlags::HAS_SLOW_SELECTOR
+                } else {
+                    ElementSelectorFlags::HAS_SLOW_SELECTOR_LATER_SIBLINGS
+                },
+            );
+            let mut included = |candidate: &E| {
+                context.shared.nest(|ctx| {
+                    data.selectors()
+                        .iter()
+                        .any(|s| matches_supported_selector(s.iter(), candidate, ctx, flags_setter))
+                })
+            };
+            if !included(element) {
+                return false;
+            }
+            let mut index = 1_i64;
+            let mut current = element.clone();
+            while let Some(sibling) = if from_end {
+                current.next_sibling_element()
+            } else {
+                current.prev_sibling_element()
+            } {
+                if included(&sibling) {
+                    index += 1;
+                }
+                current = sibling;
+            }
+            matches_an_plus_b(index, nth.a, nth.b)
+        }
         Component::Is(ref list) | Component::Where(ref list) | Component::Any(_, ref list) => {
             context.shared.nest(|context| {
                 for selector in &**list {
-                    if matches_complex_selector(selector.iter(), element, context, flags_setter) {
+                    if matches_supported_selector(selector.iter(), element, context, flags_setter) {
                         return true;
                     }
                 }
@@ -877,13 +1007,13 @@ where
         }
         Component::Negation(ref list) => context.shared.nest_for_negation(|context| {
             for selector in &**list {
-                if matches_complex_selector(selector.iter(), element, context, flags_setter) {
+                if matches_supported_selector(selector.iter(), element, context, flags_setter) {
                     return false;
                 }
             }
             true
         }),
-        Component::Nesting | Component::Has(..) => unreachable!(),
+        Component::Nesting | Component::Has(..) => false,
     }
 }
 
@@ -946,13 +1076,16 @@ where
         "invalid cache"
     );
 
-    // Is there a non-negative integer n such that An+B=index?
-    match index.checked_sub(b) {
-        None => false,
-        Some(an) => match an.checked_div(a) {
-            Some(n) => n >= 0 && a * n == an,
-            None /* a == 0 */ => an == 0,
-        },
+    matches_an_plus_b(i64::from(index), a, b)
+}
+
+fn matches_an_plus_b(index: i64, a: i32, b: i32) -> bool {
+    let delta = index - i64::from(b);
+    let a = i64::from(a);
+    if a == 0 {
+        delta == 0
+    } else {
+        delta % a == 0 && delta / a >= 0
     }
 }
 

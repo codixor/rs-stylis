@@ -29,7 +29,7 @@
 //!   properties::{Property, PropertyId, background::*},
 //!   values::{url::Url, image::Image, color::{CssColor, RGBA}, position::*, length::*},
 //!   stylesheet::{ParserOptions, PrinterOptions},
-//!   dependencies::Location,
+//!   dependencies::{Location, SourceSpan},
 //! };
 //!
 //! let background = Property::parse_string(
@@ -43,7 +43,11 @@
 //!   Property::Background(smallvec![Background {
 //!     image: Image::Url(Url {
 //!       url: "img.png".into(),
-//!       loc: Location { line: 1, column: 1 }
+//!       loc: Location { line: 1, column: 1 },
+//!       span: SourceSpan {
+//!         start: Location { line: 1, column: 6 },
+//!         end: Location { line: 1, column: 12 },
+//!       },
 //!     }),
 //!     color: CssColor::RGBA(RGBA {
 //!       red: 0,

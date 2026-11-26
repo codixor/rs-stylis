@@ -37,6 +37,7 @@ use crate::selector::{SelectorList, SelectorParser};
 use crate::traits::{Parse, ParseWithOptions};
 use crate::values::ident::{CustomIdent, DashedIdent};
 use crate::values::string::CowArcStr;
+use crate::values::url::Url;
 use crate::vendor_prefix::VendorPrefix;
 use bitflags::bitflags;
 use cssparser::*;
@@ -179,7 +180,7 @@ pub enum AtRulePrelude<'i, T> {
     MozDocument,
     /// A @import rule prelude.
     Import(
-        CowRcStr<'i>,
+        Url<'i>,
         MediaList<'i>,
         Option<SupportsCondition<'i>>,
         Option<Option<LayerName<'i>>>,
@@ -263,7 +264,7 @@ impl<'a, 'o, 'i, T: crate::traits::AtRuleParser<'i>> AtRuleParser<'i>
               return Err(input.new_custom_error(ParserError::UnexpectedImportRule))
             }
 
-            let url_string = input.expect_url_or_string()?.clone();
+            let url = Url::parse_url_or_string(input)?;
 
             let layer = if input.try_parse(|input| input.expect_ident_matching("layer")).is_ok() {
               Some(None)
@@ -282,7 +283,7 @@ impl<'a, 'o, 'i, T: crate::traits::AtRuleParser<'i>> AtRuleParser<'i>
               None
             };
             let media = MediaList::parse(input, &self.options)?;
-            return Ok(AtRulePrelude::Import(url_string, media, supports, layer));
+            return Ok(AtRulePrelude::Import(url, media, supports, layer));
           },
           "namespace" => {
             if self.state > State::Namespaces {
@@ -340,7 +341,8 @@ impl<'a, 'o, 'i, T: crate::traits::AtRuleParser<'i>> AtRuleParser<'i>
             AtRulePrelude::Import(url, media, supports, layer) => {
                 self.state = State::Imports;
                 self.rules.0.push(CssRule::Import(ImportRule {
-                    url: url.into(),
+                    url: url.url,
+                    url_span: url.span,
                     layer,
                     supports,
                     media,
@@ -500,7 +502,7 @@ impl<'a, 'o, 'b, 'i, T: crate::traits::AtRuleParser<'i>> NestedRuleParser<'a, 'o
                 important_declarations: nested_parser.important_declarations,
                 source_order: nested_parser.source_order,
                 authored_declarations: nested_parser.authored_declarations,
-                react_compat_declarations: None,
+                react_compat_prefixes: None,
             },
             rules,
         ))

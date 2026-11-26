@@ -1,6 +1,6 @@
 //! CSS url() values.
 
-use crate::dependencies::{Dependency, Location, UrlDependency};
+use crate::dependencies::{Dependency, Location, SourceSpan, UrlDependency};
 use crate::error::{ParserError, PrinterError};
 use crate::printer::Printer;
 use crate::traits::{Parse, ToCss};
@@ -14,6 +14,8 @@ pub struct Url<'i> {
     pub url: CowArcStr<'i>,
     /// The location where the `url()` was seen in the CSS source file.
     pub loc: Location,
+    /// The original source span of the URL contents, excluding quotes and delimiters.
+    pub span: SourceSpan,
 }
 
 impl<'i> PartialEq for Url<'i> {
@@ -24,13 +26,107 @@ impl<'i> PartialEq for Url<'i> {
 
 impl<'i> Parse<'i> for Url<'i> {
     fn parse<'t>(input: &mut Parser<'i, 't>) -> Result<Self, ParseError<'i, ParserError<'i>>> {
-        let loc = input.current_source_location();
-        let url = input.expect_url()?.into();
-        Ok(Url {
-            url,
-            loc: loc.into(),
+        Self::parse_token(input, false)
+    }
+}
+
+impl<'i> Url<'i> {
+    pub(crate) fn parse_url_or_string<'t>(
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self, ParseError<'i, ParserError<'i>>> {
+        Self::parse_token(input, true)
+    }
+
+    fn parse_token<'t>(
+        input: &mut Parser<'i, 't>,
+        allow_string: bool,
+    ) -> Result<Self, ParseError<'i, ParserError<'i>>> {
+        input.skip_whitespace();
+        let start = input.state();
+        let value = if allow_string {
+            input.expect_url_or_string()?
+        } else {
+            input.expect_url()?
+        };
+        let loc = start.source_location().into();
+        let raw = input.slice_from(start.position());
+        Ok(Self {
+            url: value.into(),
+            loc,
+            span: content_span(loc, raw),
         })
     }
+}
+
+fn css_whitespace(ch: char) -> bool {
+    matches!(ch, ' ' | '\t' | '\n' | '\r' | '\x0c')
+}
+
+/// The tokenizer has already validated the token and decoded its value. Walk only its
+/// original spelling to locate delimiters, which can themselves be escaped URL contents.
+fn content_span(loc: Location, raw: &str) -> SourceSpan {
+    let value = if raw.starts_with(['\'', '"']) {
+        raw
+    } else {
+        let (_, arguments) = raw.split_once('(').expect("parsed url() function");
+        arguments.trim_start_matches(css_whitespace)
+    };
+    let quote = value.chars().next().filter(|ch| matches!(ch, '\'' | '"'));
+    let value = &value[usize::from(quote.is_some())..];
+    let (start, _) = advance(loc, &raw[..raw.len() - value.len()]);
+
+    let mut chars = value.char_indices().peekable();
+    let mut len = value.len();
+    while let Some((index, ch)) = chars.next() {
+        if ch == '\\' {
+            if chars.next_if(|(_, ch)| ch.is_ascii_hexdigit()).is_some() {
+                for _ in 1..6 {
+                    if chars.next_if(|(_, ch)| ch.is_ascii_hexdigit()).is_none() {
+                        break;
+                    }
+                }
+                if matches!(
+                    chars.next_if(|(_, ch)| css_whitespace(*ch)),
+                    Some((_, '\r'))
+                ) {
+                    chars.next_if(|(_, ch)| *ch == '\n');
+                }
+            } else {
+                chars.next();
+            }
+        } else if Some(ch) == quote || (quote.is_none() && (ch == ')' || css_whitespace(ch))) {
+            len = index;
+            break;
+        }
+    }
+    let (_, end) = advance(start, &value[..len]);
+    SourceSpan { start, end }
+}
+
+/// Returns the cursor after the text and the inclusive position of its last UTF-16 code unit.
+fn advance(mut cursor: Location, text: &str) -> (Location, Location) {
+    let mut end = Location {
+        column: cursor.column - 1,
+        ..cursor
+    };
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        end = cursor;
+        match ch {
+            '\r' | '\n' | '\x0c' => {
+                if ch == '\r' && chars.next_if_eq(&'\n').is_some() {
+                    end.column += 1;
+                }
+                cursor.line += 1;
+                cursor.column = 1;
+            }
+            _ => {
+                cursor.column += ch.len_utf16() as u32;
+                end.column = cursor.column - 1;
+            }
+        }
+    }
+    (cursor, end)
 }
 
 impl<'i> ToCss for Url<'i> {

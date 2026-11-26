@@ -502,7 +502,7 @@ impl<'a, 'o, 'b, 'i, T: crate::traits::AtRuleParser<'i>> NestedRuleParser<'a, 'o
                 important_declarations: nested_parser.important_declarations,
                 source_order: nested_parser.source_order,
                 authored_declarations: nested_parser.authored_declarations,
-                react_compat_declarations: None,
+                react_compat_prefixes: None,
             },
             rules,
         ))

@@ -33,33 +33,20 @@ pub(crate) fn serialize_react_compat_string<W>(value: &str, dest: &mut W) -> fmt
 where
     W: fmt::Write,
 {
-    if can_serialize_simple_quoted_string(value) {
-        dest.write_char('"')?;
-        dest.write_str(value)?;
-        return dest.write_char('"');
-    }
+    use fmt::Write;
 
-    let mut serialized = String::new();
-    serialize_string(value, &mut serialized)?;
-    if serialized.len() >= 2 {
-        let bytes = serialized.as_bytes();
-        if matches!(bytes[0], b'\'' | b'"') && bytes[serialized.len() - 1] == bytes[0] {
-            dest.write_char('"')?;
-            for ch in serialized[1..serialized.len() - 1].chars() {
-                match ch {
-                    '"' => {
-                        dest.write_char('\\')?;
-                        dest.write_char('"')?;
-                    }
-                    '\u{a0}' => dest.write_str("\\a0")?,
-                    _ => dest.write_char(ch)?,
-                }
-            }
-            return dest.write_char('"');
+    dest.write_char('"')?;
+    let mut parts = value.split('\u{a0}');
+    cssparser::CssStringWriter::new(dest).write_str(parts.next().unwrap_or_default())?;
+    for part in parts {
+        dest.write_str("\\a0")?;
+        // A hex digit would extend the escape, and CSS consumes a following space.
+        if part.starts_with(|ch: char| ch.is_ascii_hexdigit() || ch == ' ') {
+            dest.write_char(' ')?;
         }
+        cssparser::CssStringWriter::new(dest).write_str(part)?;
     }
-
-    dest.write_str(&serialized)
+    dest.write_char('"')
 }
 
 /// A string that is either owned or borrowed from the input CSS source code.

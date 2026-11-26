@@ -493,7 +493,7 @@ impl ToCss for CssColor {
         match self {
             CssColor::CurrentColor(syntax) => dest.write_str(syntax.as_str()),
             CssColor::RGBA(color) => {
-                if dest.is_react_compat() {
+                if dest.uses_authored_values() {
                     if let Some(source) = &color.authored {
                         return dest.write_str(source);
                     }

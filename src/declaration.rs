@@ -6,7 +6,7 @@ use std::ops::Range;
 use crate::context::{DeclarationContext, PropertyHandlerContext};
 use crate::error::{ParserError, PrinterError, PrinterErrorKind};
 use crate::parser::ParserOptions;
-use crate::printer::{Printer, PrinterOptions};
+use crate::printer::Printer;
 use crate::properties::box_shadow::BoxShadowHandler;
 use crate::properties::custom::{CustomProperty, CustomPropertyName};
 use crate::properties::masking::MaskHandler;
@@ -36,7 +36,6 @@ use crate::properties::{
 };
 use crate::selector::SelectorList;
 use crate::smallvec_compat::SmallVec;
-use crate::stylesheet::NormalizationProfile;
 use crate::targets::Features;
 use crate::traits::{PropertyHandler, ToCss};
 use crate::values::ident::DashedIdent;
@@ -44,9 +43,9 @@ use crate::values::string::CowArcStr;
 use cssparser::*;
 use indexmap::IndexMap;
 
-#[derive(Debug, PartialEq, Clone)]
-pub(crate) struct ReactCompatDeclaration {
-    text: String,
+struct ReactDeclaration {
+    name: String,
+    value: String,
     important: bool,
 }
 
@@ -65,8 +64,8 @@ pub struct DeclarationBlock<'i> {
     pub source_order: Vec<bool>,
     /// Authored declaration text in parse order, without `!important`.
     pub authored_declarations: Vec<String>,
-    /// Exact JS-style prefixed declarations for ReactCompat printing.
-    pub(crate) react_compat_declarations: Option<Vec<ReactCompatDeclaration>>,
+    /// Whether React-compatible minification requested vendor prefix expansion.
+    pub(crate) react_compat_prefixes: Option<bool>,
 }
 
 impl<'i> DeclarationBlock<'i> {
@@ -102,7 +101,7 @@ impl<'i> DeclarationBlock<'i> {
             declarations,
             source_order,
             authored_declarations,
-            react_compat_declarations: None,
+            react_compat_prefixes: None,
         })
     }
 
@@ -125,7 +124,7 @@ impl<'i> DeclarationBlock<'i> {
             important_declarations: vec![],
             source_order: vec![],
             authored_declarations: vec![],
-            react_compat_declarations: None,
+            react_compat_prefixes: None,
         }
     }
 
@@ -141,15 +140,15 @@ impl<'i> ToCss for DeclarationBlock<'i> {
         W: std::fmt::Write,
     {
         if dest.is_react_compat()
-            && let Some(decls) = &self.react_compat_declarations
+            && let Some(prefixes) = self.react_compat_prefixes
         {
-            return self.write_react_compat_declarations(dest, decls, false);
+            return self.write_react_compat_declarations(dest, prefixes, None, false);
         }
 
         let len = self.declarations.len() + self.important_declarations.len();
         let mut i = 0usize;
 
-        if dest.is_react_compat() && self.source_order.len() == len {
+        if dest.is_react_compat() && self.has_valid_source_order() {
             let mut normal = self.declarations.iter();
             let mut important = self.important_declarations.iter();
 
@@ -198,39 +197,85 @@ impl<'i> DeclarationBlock<'i> {
     fn write_react_compat_declarations<W>(
         &self,
         dest: &mut Printer<W>,
-        decls: &[ReactCompatDeclaration],
+        prefixes: bool,
+        rule: Option<(&SelectorList, u32)>,
         has_nested_rules: bool,
     ) -> Result<(), PrinterError>
     where
         W: std::fmt::Write,
     {
-        for (i, decl) in decls.iter().enumerate() {
-            if has_nested_rules {
-                if i > 0 {
-                    dest.newline()?;
+        let mut source = Vec::with_capacity(self.len());
+        for (index, (property, important)) in self.ordered_properties().into_iter().enumerate() {
+            if let Some((selectors, source_index)) = rule
+                && handle_composes(property, dest, selectors, source_index)?
+            {
+                continue;
+            }
+
+            let value = dest.declaration_text(|printer| {
+                if let Property::Unparsed(unparsed) = property
+                    && matches!(
+                        unparsed.property_id,
+                        PropertyId::Animation(_) | PropertyId::AnimationName(_)
+                    )
+                    && printer
+                        .css_module
+                        .as_ref()
+                        .is_some_and(|m| m.config.animation)
+                {
+                    let mut value = unparsed.value.clone();
+                    crate::properties::animation::mark_animation_names(
+                        &mut value,
+                        matches!(unparsed.property_id, PropertyId::Animation(_)),
+                    );
+                    return value.to_css(printer, false);
                 }
-            }
-
-            dest.write_str(&decl.text)?;
-            if decl.important {
-                dest.whitespace()?;
-                dest.write_str("!important")?;
-            }
-
-            let needs_semicolon = if has_nested_rules {
-                i != decls.len() - 1
-                    || !dest.minify
-                    || has_nested_rules
-                    || dest.preserve_trailing_semicolon()
+                property.value_to_css(printer)
+            })?;
+            let authored = self.authored_declarations.get(index).map(String::as_str);
+            if let Property::Custom(custom) = property {
+                let name = dest.declaration_text(|printer| custom.name.to_css(printer))?;
+                source.push(ReactDeclaration::new(
+                    name, value, important, authored, dest,
+                ));
             } else {
-                i != decls.len() - 1 || dest.preserve_trailing_semicolon()
-            };
-
-            if needs_semicolon {
-                dest.write_char(';')?;
-                if !has_nested_rules && i != decls.len() - 1 {
-                    dest.whitespace()?;
+                let id = property.property_id();
+                for prefix in id.prefix().or_none() {
+                    let mut name = cssparser::ToCss::to_css_string(&prefix);
+                    name.push_str(id.name());
+                    source.push(ReactDeclaration::new(
+                        name,
+                        value.clone(),
+                        important,
+                        authored,
+                        dest,
+                    ));
                 }
+            }
+        }
+
+        let mut first = true;
+        for (index, decl) in source.iter().enumerate() {
+            let declarations = if prefixes {
+                expand_react_compat_declaration(&source, index)
+            } else {
+                vec![emit_raw_declaration(&decl.name, &decl.value)]
+            };
+            for text in declarations {
+                if !first {
+                    if has_nested_rules {
+                        dest.newline()?;
+                    } else {
+                        dest.whitespace()?;
+                    }
+                }
+                first = false;
+                dest.write_str_with_newlines(&text)?;
+                if decl.important {
+                    dest.whitespace()?;
+                    dest.write_str("!important")?;
+                }
+                dest.write_char(';')?;
             }
         }
 
@@ -291,15 +336,20 @@ impl<'i> DeclarationBlock<'i> {
         W: std::fmt::Write,
     {
         if dest.is_react_compat()
-            && let Some(decls) = &self.react_compat_declarations
+            && let Some(prefixes) = self.react_compat_prefixes
         {
-            return self.write_react_compat_declarations(dest, decls, has_nested_rules);
+            return self.write_react_compat_declarations(
+                dest,
+                prefixes,
+                Some((selectors, source_index)),
+                has_nested_rules,
+            );
         }
 
         let mut i = 0;
         let len = self.len();
 
-        if dest.is_react_compat() && self.source_order.len() == len {
+        if dest.is_react_compat() && self.has_valid_source_order() {
             let mut normal = self.declarations.iter();
             let mut important = self.important_declarations.iter();
 
@@ -312,19 +362,8 @@ impl<'i> DeclarationBlock<'i> {
                     normal.next().expect("normal declaration order mismatch")
                 };
 
-                if let crate::properties::Property::Composes(composes) = decl {
-                    if dest.is_nested() && dest.css_module.is_some() {
-                        return Err(
-                            dest.error(PrinterErrorKind::InvalidComposesNesting, composes.loc)
-                        );
-                    }
-
-                    if let Some(css_module) = &mut dest.css_module {
-                        css_module
-                            .handle_composes(&selectors, composes, source_index)
-                            .map_err(|e| dest.error(e, composes.loc))?;
-                        continue;
-                    }
+                if handle_composes(decl, dest, selectors, source_index)? {
+                    continue;
                 }
 
                 if i > 0 {
@@ -351,17 +390,8 @@ impl<'i> DeclarationBlock<'i> {
         for decl in &$decls {
           // The CSS modules `composes` property is handled specially, and omitted during printing.
           // We need to add the classes it references to the list for the selectors in this rule.
-          if let crate::properties::Property::Composes(composes) = &decl {
-            if dest.is_nested() && dest.css_module.is_some() {
-              return Err(dest.error(PrinterErrorKind::InvalidComposesNesting, composes.loc));
-            }
-
-            if let Some(css_module) = &mut dest.css_module {
-              css_module
-                .handle_composes(&selectors, &composes, source_index)
-                .map_err(|e| dest.error(e, composes.loc))?;
-              continue;
-            }
+          if handle_composes(decl, dest, selectors, source_index)? {
+            continue;
           }
 
           if i > 0 {
@@ -396,8 +426,9 @@ impl<'i> DeclarationBlock<'i> {
         context: &mut PropertyHandlerContext<'i, '_>,
         react_compat: bool,
     ) {
+        self.react_compat_prefixes =
+            react_compat.then(|| context.targets.include.contains(Features::VendorPrefixes));
         if react_compat {
-            self.apply_react_compat_prefixes(context);
             return;
         }
 
@@ -428,10 +459,20 @@ impl<'i> DeclarationBlock<'i> {
         self.declarations = std::mem::take(&mut handler.decls);
     }
 
+    fn has_valid_source_order(&self) -> bool {
+        self.source_order.len() == self.len()
+            && self
+                .source_order
+                .iter()
+                .filter(|&&important| important)
+                .count()
+                == self.important_declarations.len()
+    }
+
     fn ordered_properties(&self) -> Vec<(&Property<'i>, bool)> {
         let len = self.len();
         let mut ordered = Vec::with_capacity(len);
-        if self.source_order.len() == len {
+        if self.has_valid_source_order() {
             let mut normal = self.declarations.iter();
             let mut important = self.important_declarations.iter();
             for is_important in &self.source_order {
@@ -453,62 +494,6 @@ impl<'i> DeclarationBlock<'i> {
                 .map(|property| (property, true)),
         );
         ordered
-    }
-
-    fn apply_react_compat_prefixes(&mut self, context: &mut PropertyHandlerContext<'i, '_>) {
-        self.react_compat_declarations = None;
-        let mut source = Vec::with_capacity(self.len());
-        if self.authored_declarations.len() == self.len() && self.source_order.len() == self.len() {
-            for (text, important) in self.authored_declarations.iter().zip(&self.source_order) {
-                let (name, value) = text
-                    .split_once(':')
-                    .expect("react compat authored declaration missing colon");
-                let normalized_value = minify_react_compat_authored_value(value);
-                source.push((
-                    emit_raw_declaration(name, &normalized_value),
-                    name.to_string(),
-                    normalized_value,
-                    *important,
-                ));
-            }
-        } else {
-            for (property, important) in self.ordered_properties() {
-                let text = property
-                    .to_css_string(
-                        false,
-                        PrinterOptions {
-                            minify: true,
-                            normalization_profile: NormalizationProfile::ReactCompat,
-                            targets: context.targets,
-                            ..PrinterOptions::default()
-                        },
-                    )
-                    .expect("serialize react compat declaration");
-                let (name, value) = text
-                    .split_once(':')
-                    .expect("react compat declaration missing colon");
-                source.push((text.clone(), name.to_string(), value.to_string(), important));
-            }
-        }
-
-        let should_expand_prefixes = context.targets.include.contains(Features::VendorPrefixes);
-        let mut decls = Vec::with_capacity(source.len());
-        for index in 0..source.len() {
-            let (_, _, _, important) = &source[index];
-            let texts = if should_expand_prefixes {
-                expand_react_compat_declaration(&source, index)
-            } else {
-                vec![source[index].0.clone()]
-            };
-            for text in texts {
-                decls.push(ReactCompatDeclaration {
-                    text,
-                    important: *important,
-                });
-            }
-        }
-
-        self.react_compat_declarations = Some(decls);
     }
 
     /// Returns whether the declaration block is empty.
@@ -553,6 +538,83 @@ impl<'i> DeclarationBlock<'i> {
 
         Ok((key_range, val_range))
     }
+}
+
+impl ReactDeclaration {
+    fn new<W: std::fmt::Write>(
+        name: String,
+        value: String,
+        important: bool,
+        authored: Option<&str>,
+        dest: &Printer<W>,
+    ) -> Self {
+        // Keep the authored spelling when it serializes to the same value as the current AST.
+        // This also excludes spellings that precede CSS Modules or URL placeholder rewrites.
+        if let Some((raw_name, raw_value)) = authored.and_then(|text| text.split_once(':'))
+            && (raw_name == name
+                || (!name.starts_with("--") && raw_name.eq_ignore_ascii_case(&name)))
+        {
+            let normalized = minify_react_compat_authored_value(raw_value);
+            if normalized == value
+                || Self::typed_value(raw_name, &normalized, dest).as_ref() == Some(&value)
+            {
+                return Self {
+                    name: raw_name.to_owned(),
+                    value: normalized,
+                    important,
+                };
+            }
+        }
+        Self {
+            name,
+            value,
+            important,
+        }
+    }
+
+    fn typed_value<W: std::fmt::Write>(
+        name: &str,
+        value: &str,
+        dest: &Printer<W>,
+    ) -> Option<String> {
+        let mut input = ParserInput::new(value);
+        let mut parser = Parser::new(&mut input);
+        let id = PropertyId::from(CowArcStr::from(name));
+        let property = parser
+            .parse_entirely(|p| Property::parse(id, p, &ParserOptions::default()))
+            .ok()?;
+        let mut css = String::new();
+        property
+            .value_to_css(&mut dest.declaration_printer(&mut css))
+            .ok()?;
+        Some(css)
+    }
+}
+
+fn handle_composes<W: std::fmt::Write>(
+    property: &Property,
+    dest: &mut Printer<W>,
+    selectors: &SelectorList,
+    source_index: u32,
+) -> Result<bool, PrinterError> {
+    if let Property::Composes(composes) = property {
+        let nested = dest.is_nested();
+        if let Some(module) = &mut dest.css_module {
+            if nested {
+                return Err(dest.error(PrinterErrorKind::InvalidComposesNesting, composes.loc));
+            }
+            let source_index = if module.sources.len() == 1 {
+                0
+            } else {
+                source_index
+            };
+            module
+                .handle_composes(selectors, composes, source_index)
+                .map_err(|e| dest.error(e, composes.loc))?;
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn emit_raw_declaration(name: &str, value: &str) -> String {
@@ -748,20 +810,17 @@ fn grid_span_number(value: &str) -> Option<i32> {
         .or_else(|| value.trim().parse::<i32>().ok())
 }
 
-fn find_first_grid_pair<'a>(
-    source: &'a [(String, String, String, bool)],
-    suffix: &str,
-) -> Option<&'a str> {
+fn find_first_grid_pair<'a>(source: &'a [ReactDeclaration], suffix: &str) -> Option<&'a str> {
     source
         .iter()
-        .find(|(_, name, _, _)| name.starts_with("grid-") && name.ends_with(suffix))
-        .map(|(_, _, value, _)| value.as_str())
+        .find(|decl| decl.name.starts_with("grid-") && decl.name.ends_with(suffix))
+        .map(|decl| decl.value.as_str())
 }
 
 fn expand_grid_start(
     name: &str,
     value: &str,
-    source: &[(String, String, String, bool)],
+    source: &[ReactDeclaration],
     original: &str,
 ) -> Vec<String> {
     let Some(pair_value) = find_first_grid_pair(source, "-end") else {
@@ -791,7 +850,7 @@ fn expand_grid_start(
 fn expand_grid_end(
     name: &str,
     value: &str,
-    source: &[(String, String, String, bool)],
+    source: &[ReactDeclaration],
     original: &str,
 ) -> Vec<String> {
     if find_first_grid_pair(source, "-start").is_some() {
@@ -863,11 +922,9 @@ fn expand_size_keyword_declaration(name: &str, value: &str, original: &str) -> V
     decls
 }
 
-fn expand_react_compat_declaration(
-    source: &[(String, String, String, bool)],
-    index: usize,
-) -> Vec<String> {
-    let (original, name, value, _) = &source[index];
+fn expand_react_compat_declaration(source: &[ReactDeclaration], index: usize) -> Vec<String> {
+    let ReactDeclaration { name, value, .. } = &source[index];
+    let original = &emit_raw_declaration(name, value);
     if name.starts_with('-') {
         return vec![original.clone()];
     }

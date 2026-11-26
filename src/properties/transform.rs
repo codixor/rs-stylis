@@ -1139,7 +1139,7 @@ impl ToCss for Transform {
         use Transform::*;
         match self {
             Translate(x, y, source) => {
-                if dest.is_react_compat()
+                if dest.uses_authored_values()
                     && let Some(source) = source
                 {
                     dest.write_str(source)?;
@@ -1178,7 +1178,7 @@ impl ToCss for Transform {
                 dest.write_char(')')
             }
             Translate3d(x, y, z, source) => {
-                if dest.is_react_compat()
+                if dest.uses_authored_values()
                     && let Some(source) = source
                 {
                     dest.write_str(source)?;

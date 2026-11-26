@@ -463,7 +463,7 @@ impl<'i> ImageSetOption<'i> {
                     serialize_string(&url.url, dest)?;
                 }
             }
-            Image::Url(url) if dest.is_react_compat() => {
+            Image::Url(url) if dest.is_react_compat() && dest.dependencies.is_none() => {
                 dest.write_str("url(")?;
                 serialize_react_compat_string(&url.url, dest)?;
                 dest.write_char(')')?;

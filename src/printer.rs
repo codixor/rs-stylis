@@ -76,11 +76,12 @@ pub struct Printer<'a, 'b, 'c, W> {
     /// the vendor prefix of whatever is being printed.
     pub(crate) vendor_prefix: VendorPrefix,
     pub(crate) in_calc: bool,
-    pub(crate) css_module: Option<CssModule<'a, 'b, 'c>>,
+    pub(crate) css_module: Option<CssModule<'c, 'b, 'c>>,
     pub(crate) dependencies: Option<Vec<Dependency>>,
     pub(crate) remove_imports: bool,
     pub(crate) pseudo_classes: Option<PseudoClasses<'a>>,
     pub(crate) normalization_profile: NormalizationProfile,
+    use_authored_values: bool,
     pub(crate) namespace_middleware: bool,
     last_char: Option<char>,
 }
@@ -113,6 +114,7 @@ impl<'a, 'b, 'c, W: std::fmt::Write + Sized> Printer<'a, 'b, 'c, W> {
             remove_imports: matches!(&options.analyze_dependencies, Some(d) if d.remove_imports),
             pseudo_classes: options.pseudo_classes,
             normalization_profile: options.normalization_profile,
+            use_authored_values: true,
             namespace_middleware: options.namespace_middleware,
             last_char: None,
         }
@@ -262,6 +264,43 @@ impl<'a, 'b, 'c, W: std::fmt::Write + Sized> Printer<'a, 'b, 'c, W> {
         self.indent -= amt;
     }
 
+    pub(crate) fn declaration_printer<'d>(
+        &self,
+        text: &'d mut String,
+    ) -> Printer<'d, 'b, 'c, String> {
+        let mut printer = Printer::new(
+            text,
+            PrinterOptions {
+                minify: true,
+                normalization_profile: self.normalization_profile,
+                targets: self.targets.current,
+                ..PrinterOptions::default()
+            },
+        );
+        printer.sources = self.sources;
+        printer.loc = self.loc;
+        printer.vendor_prefix = self.vendor_prefix;
+        // The declaration printer validates authored spellings against these typed values.
+        printer.use_authored_values = false;
+        printer
+    }
+
+    /// Serialize a declaration component for prefix expansion, retaining the source and
+    /// recording CSS Modules exports and URL dependencies once per authored value.
+    pub(crate) fn declaration_text(
+        &mut self,
+        write: impl FnOnce(&mut Printer<String>) -> Result<(), PrinterError>,
+    ) -> Result<String, PrinterError> {
+        let mut text = String::new();
+        let mut printer = self.declaration_printer(&mut text);
+        printer.css_module = self.css_module.take();
+        printer.dependencies = self.dependencies.take();
+        let result = write(&mut printer);
+        self.css_module = printer.css_module;
+        self.dependencies = printer.dependencies;
+        result.map(|()| text)
+    }
+
     /// Returns whether the indent level is greater than one.
     pub fn is_nested(&self) -> bool {
         self.indent > 2
@@ -363,6 +402,10 @@ impl<'a, 'b, 'c, W: std::fmt::Write + Sized> Printer<'a, 'b, 'c, W> {
 
     pub(crate) fn is_react_compat(&self) -> bool {
         self.normalization_profile.is_react_compat()
+    }
+
+    pub(crate) fn uses_authored_values(&self) -> bool {
+        self.is_react_compat() && self.use_authored_values
     }
 
     pub(crate) fn preserve_trailing_semicolon(&self) -> bool {
